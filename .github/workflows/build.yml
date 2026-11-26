@@ -1,0 +1,70 @@
+# Builds timetable.wp2app from timetable_full.zip (the whole project) in the cloud.
+# Run: Actions -> "Build timetable" -> Run workflow. Result: the artifact "timetable" (and "logs").
+name: Build timetable
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Unpack the project
+        run: unzip -q timetable_full.zip && ls apps-main/apps/timetable
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv7em-none-eabi
+          components: llvm-tools
+
+      - name: Put resvg on PATH
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/resvg.tar.gz" \
+            https://github.com/linebender/resvg/releases/download/v0.49.0/resvg-linux-x86_64.tar.gz
+          echo "216637e75e909e53e3098b0875cd5f7da2fdc8b4359771b4a29b539afff9d3f5  $RUNNER_TEMP/resvg.tar.gz" | sha256sum -c
+          mkdir -p "$RUNNER_TEMP/bin"
+          tar -xzf "$RUNNER_TEMP/resvg.tar.gz" -C "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Check the listing
+        shell: bash
+        working-directory: apps-main
+        run: make check 2>&1 | tee ../check.log
+
+      - name: Tests (their output goes to the logs even if they fail)
+        shell: bash
+        working-directory: apps-main
+        continue-on-error: true
+        run: make test APP=timetable 2>&1 | tee ../test.log
+
+      - name: Build
+        shell: bash
+        working-directory: apps-main
+        run: make build APP=timetable 2>&1 | tee ../build.log
+
+      - name: Size of the package
+        if: always()
+        run: ls -l apps-main/target/*.wp2app || true
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: logs
+          path: |
+            check.log
+            test.log
+            build.log
+          if-no-files-found: ignore
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: timetable
+          path: apps-main/target/timetable.wp2app
+          if-no-files-found: error
